@@ -1,0 +1,39 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+.terraform.lock.hcl
+override.tf
+override.tf.json
+
+# Ansible
+*.retry
+.vault_pass
+vault_pass.txt
+
+# SSH keys — never commit these
+*.pem
+*.key
+id_rsa
+id_ed25519
+homelab_ed25519
+
+# Secrets
+secrets/
+.env
+*.secret
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Kubeconfig — contains cluster credentials
+kubeconfig
+*.kubeconfig
