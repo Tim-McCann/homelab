@@ -27,8 +27,12 @@ sudo apt-get install -y gnupg software-properties-common
 wget -O- https://apt.releases.hashicorp.com/gpg | \
   gpg --dearmor | \
   sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+# Use UBUNTU_CODENAME if available (Linux Mint sets this to the upstream Ubuntu codename)
+# shellcheck source=/dev/null
+[ -f /etc/os-release ] && source /etc/os-release
+DISTRO_CODENAME="${UBUNTU_CODENAME:-$(lsb_release -cs)}"
 echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
-  https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+  https://apt.releases.hashicorp.com ${DISTRO_CODENAME} main" | \
   sudo tee /etc/apt/sources.list.d/hashicorp.list
 sudo apt-get update -qq
 sudo apt-get install -y terraform
@@ -36,8 +40,7 @@ terraform version
 
 # ── Ansible ───────────────────────────────────────────────
 echo "--> Installing Ansible..."
-sudo apt-get install -y python3-pip
-pip3 install --user ansible ansible-lint
+sudo apt-get install -y ansible ansible-lint
 ansible --version
 
 # ── Helm ──────────────────────────────────────────────────

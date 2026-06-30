@@ -1,0 +1,335 @@
+---
+# Proxmox LXC Container Baseline Configuration
+#
+# This playbook implements the full bootstrap pipeline for LXC containers on Proxmox.
+# See docs/runbooks/lxc-provisioning.md for the complete provisioning order.
+#
+# PREREQUISITES:
+#   1. Containers must exist on Proxmox host (e.g., created via Proxmox UI or Terraform)
+#   2. SSH server must be installed, enabled, and running on each container
+#      (Use the one-time bootstrap script: scripts/bootstrap-lxc-ssh.sh on the Proxmox host)
+#   3. Proxmox host must be reachable at ansible_host for the proxmox_hosts group
+#   4. SSH keys must be configured for root access to containers
+
+- name: "Proxmox Host LXC Configuration"
+  hosts: proxmox_hosts
+  gather_facts: true
+  tasks:
+
+    # ========================================================================
+    # REQUIREMENT #4: Auto-start containers on Proxmox host boot
+    # ========================================================================
+    # Issue: Containers were found stopped after host reboot with no mechanism
+    # to auto-restart them. Solution: Use `pct set` to enable onboot flag.
+    # This must run on the Proxmox host (not inside containers).
+    # ========================================================================
+
+    - name: "Enable auto-start for edge LXC containers on boot"
+      command: "pct set {{ item.vmid }} --onboot 1"
+      loop: "{{ groups['edge_lxc'] | map('extract', hostvars) | list }}"
+      register: pct_onboot_result
+      changed_when: "'changed' in pct_onboot_result.stdout or pct_onboot_result.rc == 0"
+      failed_when: pct_onboot_result.rc != 0
+
+    # ========================================================================
+    # REQUIREMENT #6: Enable LXC nesting feature for all containers
+    # ========================================================================
+    # Issue: Some workloads (e.g., containerized services, Docker) may require
+    # nesting. Set this as the desired state for reproducibility.
+    # Uses `pct set` on Proxmox host to configure container features.
+    # ========================================================================
+
+    - name: "Enable nesting feature for edge LXC containers"
+      command: "pct set {{ item.vmid }} --features nesting=1"
+      loop: "{{ groups['edge_lxc'] | map('extract', hostvars) | list }}"
+      register: pct_nesting_result
+      changed_when: "'changed' in pct_nesting_result.stdout or pct_nesting_result.rc == 0"
+      failed_when: pct_nesting_result.rc != 0
+
+    # ========================================================================
+    # REQUIREMENT #7: Configure TUN device access for Tailscale container
+    # ========================================================================
+    # Issue: Unprivileged LXC containers cannot access /dev/net/tun without
+    # explicit configuration. Tailscale VPN requires this device. This task
+    # modifies the container's /etc/pve/lxc/<vmid>.conf (Proxmox config file)
+    # to add the necessary device permissions and mount entries.
+    #
+    # This must be idempotent (no duplicate lines on repeated runs).
+    # ========================================================================
+
+    - name: "Configure TUN device for Tailscale container"
+      block:
+        # Read current container config to check if TUN is already configured
+        - name: "Read Tailscale container config file"
+          slurp:
+            src: "/etc/pve/lxc/{{ tailscale_vmid }}.conf"
+          register: lxc_config_content
+          vars:
+            tailscale_vmid: "{{ hostvars['tailscale'].vmid }}"
+
+        - name: "Add TUN device configuration if not present"
+          lineinfile:
+            path: "/etc/pve/lxc/{{ tailscale_vmid }}.conf"
+            line: "{{ item }}"
+            state: present
+            insertafter: EOF
+          loop:
+            - "lxc.cgroup2.devices.allow: c 10:200 rwm"
+            - "lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file"
+          vars:
+            tailscale_vmid: "{{ hostvars['tailscale'].vmid }}"
+          register: tun_config_result
+
+        - name: "Restart Tailscale container to apply TUN configuration"
+          command: "pct restart {{ tailscale_vmid }}"
+          when: tun_config_result is changed
+          vars:
+            tailscale_vmid: "{{ hostvars['tailscale'].vmid }}"
+          # Add a brief delay to ensure container is fully restarted before next plays
+          register: pct_restart_result
+
+        - name: "Wait for Tailscale container SSH to be available after restart"
+          wait_for:
+            host: "{{ hostvars['tailscale'].ansible_host }}"
+            port: 22
+            timeout: 30
+            delay: 5
+          when: tun_config_result is changed
+
+
+# ============================================================================
+# PLAY 2: In-Container Baseline Configuration
+# ============================================================================
+# These tasks run INSIDE the LXC containers to configure networking, DNS,
+# repos, and basic packages. All tasks are idempotent and safe for re-runs.
+# ============================================================================
+
+- name: "LXC Container Baseline Setup"
+  hosts: edge_lxc
+  gather_facts: true
+  tasks:
+
+    # ========================================================================
+    # REQUIREMENT #1: DNS Resolution
+    # ========================================================================
+    # Issue: Containers do not inherit the Proxmox host's /etc/resolv.conf.
+    # Symptom: No DNS resolution inside containers, all hostname lookups fail.
+    # Solution: Write nameservers explicitly to /etc/resolv.conf inside each
+    # container. Use a simple template to make this idempotent.
+    # ========================================================================
+
+    - name: "Configure DNS nameservers in container"
+      copy:
+        content: |
+          # Automatically generated by Ansible lxc-baseline.yml
+          # Requirement #1: Containers do not inherit Proxmox host DNS config
+          {% for ns in lxc_nameservers %}
+          nameserver {{ ns }}
+          {% endfor %}
+        dest: /etc/resolv.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: "Test DNS resolution"
+
+    - name: "Flush handlers to validate DNS immediately"
+      meta: flush_handlers
+
+    # ========================================================================
+    # REQUIREMENT #2: Default Route Configuration
+    # ========================================================================
+    # Issue: Containers were provisioned with gw=192.168.1.1, but this gateway
+    # is not actually reachable. The real network gateway is 192.168.1.254.
+    # Symptom: External traffic fails or times out.
+    # Solution: Use netplan (or fallback to ip route) to set the correct default
+    # route. Query current state to make this idempotent.
+    # ========================================================================
+
+    - name: "Retrieve current default route"
+      command: "ip route show | grep '^default'"
+      register: current_default_route
+      changed_when: false
+      failed_when: false
+
+    - name: "Update default route to correct gateway"
+      command: "ip route replace default via {{ lxc_gateway }}"
+      when: lxc_gateway not in current_default_route.stdout
+      register: route_change
+      notify: "Verify default route"
+
+    - name: "Persist default route via netplan (if available)"
+      block:
+        - name: "Check if netplan is available"
+          stat:
+            path: /etc/netplan
+          register: netplan_check
+
+        - name: "Write persistent netplan configuration"
+          copy:
+            content: |
+              # Automatically generated by Ansible lxc-baseline.yml
+              # Requirement #2: Set correct default route (192.168.1.254 not 192.168.1.1)
+              network:
+                version: 2
+                ethernets:
+                  eth0:
+                    dhcp4: false
+                    routes:
+                      - to: 0.0.0.0/0
+                        via: {{ lxc_gateway }}
+            dest: /etc/netplan/99-lxc-baseline.yaml
+            owner: root
+            group: root
+            mode: "0644"
+          when: netplan_check.stat.exists
+          register: netplan_write
+          notify: "Apply netplan configuration"
+
+        - name: "Flush handlers to apply netplan changes"
+          meta: flush_handlers
+          when: netplan_write is changed
+
+      # If netplan isn't available, we already set the route above via `ip route`
+      rescue:
+        - name: "DEBUG: netplan not available, relying on ip route"
+          debug:
+            msg: "Netplan not found; using ephemeral ip route. On next reboot, route may need to be reset."
+
+    # ========================================================================
+    # REQUIREMENT #3: SSH Server (Pre-configured via bootstrap script)
+    # ========================================================================
+    # OpenSSH server is installed via the one-time bootstrap script on the
+    # Proxmox host (scripts/bootstrap-lxc-ssh.sh). This is a chicken-and-egg
+    # problem: Ansible needs SSH to reach containers, but OpenSSH isn't
+    # installed yet. The bootstrap script uses `pct exec` to install SSH
+    # directly, bypassing the need for SSH to be present first.
+    # This task is a sanity check that SSH is running.
+    # ========================================================================
+
+    - name: "Verify SSH server is running"
+      service:
+        name: ssh
+        state: started
+        enabled: true
+      register: ssh_verify
+
+    - name: "Report SSH status"
+      debug:
+        msg: "SSH service verified: {{ ssh_verify.status.ActiveState }}"
+
+    # ========================================================================
+    # REQUIREMENT #5: Debian .sources Format Repository Support
+    # ========================================================================
+    # Issue: Modern Proxmox uses /etc/apt/sources.list.d/*.sources (deb822 format)
+    # instead of the old .list format. Old playbooks using `sed` to disable repos
+    # silently fail on .sources files, leaving repos enabled.
+    # Solution: Detect which format is in use and handle appropriately.
+    # This is a Debian 12+ issue; gracefully skip if old .list format is used.
+    # ========================================================================
+
+    - name: "Check for deb822 .sources format repo files"
+      stat:
+        path: /etc/apt/sources.list.d/pve-enterprise.sources
+      register: pve_sources_check
+
+    - name: "Disable Proxmox Enterprise repo (deb822 format) if present"
+      lineinfile:
+        path: /etc/apt/sources.list.d/pve-enterprise.sources
+        regexp: '^(URIs:.*)$'
+        line: '# \1 (disabled by Ansible lxc-baseline.yml - enterprise repo)'
+        backrefs: true
+        state: present
+      when: pve_sources_check.stat.exists
+      notify: "Update apt cache"
+
+    - name: "Fallback: Check for old-format .list repo files"
+      stat:
+        path: /etc/apt/sources.list.d/pve-enterprise.list
+      register: pve_list_check
+
+    - name: "Disable Proxmox Enterprise repo (old .list format) if present"
+      lineinfile:
+        path: /etc/apt/sources.list.d/pve-enterprise.list
+        regexp: '^(deb .*)$'
+        line: '# \1 (disabled by Ansible lxc-baseline.yml - enterprise repo)'
+        backrefs: true
+        state: present
+      when: pve_list_check.stat.exists
+      notify: "Update apt cache"
+
+    - name: "Flush apt cache update"
+      meta: flush_handlers
+
+    # ========================================================================
+    # Core Package Installation
+    # ========================================================================
+    # Install basic packages needed for containerized services.
+    # Skip openssh-server (already installed via bootstrap script).
+    # ========================================================================
+
+    - name: "Update package cache"
+      apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: "Install core packages"
+      apt:
+        name:
+          - curl
+          - wget
+          - ca-certificates
+          - dnsutils  # for dig, nslookup (testing DNS)
+          - net-tools  # for ifconfig, netstat
+          - htop
+        state: present
+
+    # ========================================================================
+    # Hostname Configuration
+    # ========================================================================
+
+    - name: "Set hostname in /etc/hostname"
+      copy:
+        content: "{{ hostname }}\n"
+        dest: /etc/hostname
+        owner: root
+        group: root
+        mode: "0644"
+      notify: "Set hostname via hostnamectl"
+
+    - name: "Update /etc/hosts with container FQDN"
+      lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.0\.1\s+localhost'
+        line: "127.0.0.1\tlocalhost {{ hostname }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: "Flush handlers to apply hostname changes"
+      meta: flush_handlers
+
+  handlers:
+
+    - name: "Test DNS resolution"
+      shell: "dig google.com +short"
+      register: dns_test
+      failed_when: dns_test.rc != 0
+      changed_when: false
+
+    - name: "Verify default route"
+      shell: "ip route show | grep '^default'"
+      register: route_verify
+      failed_when: lxc_gateway not in route_verify.stdout
+      changed_when: false
+
+    - name: "Apply netplan configuration"
+      command: "netplan apply"
+      register: netplan_apply_result
+
+    - name: "Update apt cache"
+      apt:
+        update_cache: true
+
+    - name: "Set hostname via hostnamectl"
+      command: "hostnamectl set-hostname {{ hostname }}"
+      changed_when: true
