@@ -1,0 +1,130 @@
+---
+- name: Configure Prometheus alerting rules
+  hosts: prometheus
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Write alert rules
+      ansible.builtin.copy:
+        dest: /etc/prometheus/alerts.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+        content: |
+          {% raw %}
+          groups:
+            - name: node.rules
+              rules:
+                - alert: NodeDown
+                  expr: up{job=~"node-.*"} == 0
+                  for: 2m
+                  labels:
+                    severity: critical
+                  annotations:
+                    summary: "Node {{ $labels.instance }} is down"
+                    description: "Node exporter on {{ $labels.instance }} has been unreachable for more than 2 minutes."
+
+                - alert: HighMemoryUsage
+                  expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+                  for: 5m
+                  labels:
+                    severity: warning
+                  annotations:
+                    summary: "High memory usage on {{ $labels.instance }}"
+                    description: "Memory usage is {{ $value | printf \"%.1f\" }}% on {{ $labels.instance }}"
+
+                - alert: HighCPUUsage
+                  expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+                  for: 5m
+                  labels:
+                    severity: warning
+                  annotations:
+                    summary: "High CPU usage on {{ $labels.instance }}"
+                    description: "CPU usage is {{ $value | printf \"%.1f\" }}% on {{ $labels.instance }}"
+
+                - alert: DiskSpaceLow
+                  expr: (1 - (node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"})) * 100 > 80
+                  for: 5m
+                  labels:
+                    severity: warning
+                  annotations:
+                    summary: "Low disk space on {{ $labels.instance }}"
+                    description: "Disk {{ $labels.mountpoint }} is {{ $value | printf \"%.1f\" }}% full on {{ $labels.instance }}"
+
+            - name: kubernetes.rules
+              rules:
+                - alert: PodCrashLooping
+                  expr: rate(kube_pod_container_status_restarts_total[15m]) * 60 > 0
+                  for: 5m
+                  labels:
+                    severity: warning
+                  annotations:
+                    summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash looping"
+                    description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} is restarting frequently."
+
+                - alert: PodNotReady
+                  expr: kube_pod_status_ready{condition="true"} == 0
+                  for: 5m
+                  labels:
+                    severity: warning
+                  annotations:
+                    summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is not ready"
+                    description: "Pod {{ $labels.pod }} has been not ready for more than 5 minutes."
+
+                - alert: NodeMemoryPressure
+                  expr: kube_node_status_condition{condition="MemoryPressure",status="true"} == 1
+                  for: 2m
+                  labels:
+                    severity: critical
+                  annotations:
+                    summary: "Node {{ $labels.node }} has memory pressure"
+                    description: "Kubernetes is reporting memory pressure on node {{ $labels.node }}"
+          {% endraw %}
+      notify: Restart prometheus
+
+    - name: Write prometheus config with rule_files
+      ansible.builtin.copy:
+        dest: /etc/prometheus/prometheus.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+        content: |
+          global:
+            scrape_interval: 15s
+            evaluation_interval: 15s
+
+          rule_files:
+            - /etc/prometheus/alerts.yml
+
+          scrape_configs:
+            - job_name: 'prometheus'
+              static_configs:
+                - targets: ['localhost:9090']
+
+            - job_name: 'node-nuc5'
+              static_configs:
+                - targets: ['192.168.1.20:9100']
+
+            - job_name: 'node-k3s-cp'
+              static_configs:
+                - targets: ['192.168.1.30:9100']
+
+            - job_name: 'node-k3s-w1'
+              static_configs:
+                - targets: ['192.168.1.31:9100']
+
+            - job_name: 'node-k3s-w2'
+              static_configs:
+                - targets: ['192.168.1.32:9100']
+
+            - job_name: 'kube-state-metrics'
+              static_configs:
+                - targets: ['192.168.1.30:30080']
+      notify: Restart prometheus
+
+  handlers:
+    - name: Restart prometheus
+      ansible.builtin.systemd:
+        name: prometheus
+        state: restarted
