@@ -1,0 +1,319 @@
+---
+# observability.yml
+# Installs Prometheus, Grafana, and Loki on NUC5 LXC containers.
+# Prometheus scrapes k3s cluster metrics externally.
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.yml playbooks/observability.yml
+
+- name: Install Prometheus
+  hosts: prometheus
+  become: true
+  gather_facts: true
+
+  vars:
+    prometheus_version: "2.53.0"
+    k3s_cp_ip: "192.168.1.30"
+    k3s_w1_ip: "192.168.1.31"
+    k3s_w2_ip: "192.168.1.32"
+
+  tasks:
+    - name: Set DNS and route
+      ansible.builtin.copy:
+        content: "nameserver 8.8.8.8\n"
+        dest: /etc/resolv.conf
+
+    - name: Fix default route
+      ansible.builtin.shell: ip route replace default via {{ lxc_gateway }}
+      changed_when: false
+
+    - name: Create prometheus user
+      ansible.builtin.user:
+        name: prometheus
+        shell: /bin/false
+        system: true
+        create_home: false
+
+    - name: Create prometheus directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+      loop:
+        - /etc/prometheus
+        - /var/lib/prometheus
+
+    - name: Download Prometheus
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: /tmp/prometheus.tar.gz
+        mode: '0644'
+
+    - name: Extract Prometheus
+      ansible.builtin.unarchive:
+        src: /tmp/prometheus.tar.gz
+        dest: /tmp/
+        remote_src: true
+
+    - name: Install Prometheus binaries
+      ansible.builtin.copy:
+        src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        remote_src: true
+        mode: '0755'
+      loop:
+        - prometheus
+        - promtool
+
+    - name: Write Prometheus config
+      ansible.builtin.copy:
+        dest: /etc/prometheus/prometheus.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+        content: |
+          global:
+            scrape_interval: 15s
+            evaluation_interval: 15s
+
+          scrape_configs:
+            - job_name: 'prometheus'
+              static_configs:
+                - targets: ['localhost:9090']
+
+            - job_name: 'node-nuc5'
+              static_configs:
+                - targets: ['192.168.1.20:9100']
+
+            - job_name: 'node-k3s-cp'
+              static_configs:
+                - targets: ['{{ k3s_cp_ip }}:9100']
+
+            - job_name: 'node-k3s-w1'
+              static_configs:
+                - targets: ['{{ k3s_w1_ip }}:9100']
+
+            - job_name: 'node-k3s-w2'
+              static_configs:
+                - targets: ['{{ k3s_w2_ip }}:9100']
+
+            - job_name: 'kube-state-metrics'
+              static_configs:
+                - targets: ['{{ k3s_cp_ip }}:30080']
+      notify: Restart prometheus
+
+    - name: Create systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/prometheus.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Prometheus
+          After=network.target
+
+          [Service]
+          User=prometheus
+          Group=prometheus
+          Type=simple
+          ExecStart=/usr/local/bin/prometheus \
+            --config.file=/etc/prometheus/prometheus.yml \
+            --storage.tsdb.path=/var/lib/prometheus \
+            --storage.tsdb.retention.time=15d \
+            --web.listen-address=0.0.0.0:9090
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Restart prometheus
+
+    - name: Enable and start prometheus
+      ansible.builtin.systemd:
+        name: prometheus
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Restart prometheus
+      ansible.builtin.systemd:
+        name: prometheus
+        state: restarted
+        daemon_reload: true
+
+- name: Install Grafana
+  hosts: grafana
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Set DNS and route
+      ansible.builtin.copy:
+        content: "nameserver 8.8.8.8\n"
+        dest: /etc/resolv.conf
+
+    - name: Fix default route
+      ansible.builtin.shell: ip route replace default via {{ lxc_gateway }}
+      changed_when: false
+
+    - name: Install dependencies
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - software-properties-common
+          - curl
+        state: present
+        update_cache: true
+
+    - name: Add Grafana GPG key
+      ansible.builtin.shell: |
+        curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor -o /usr/share/keyrings/grafana.gpg
+      args:
+        creates: /usr/share/keyrings/grafana.gpg
+
+    - name: Add Grafana repo
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/grafana.list
+        content: "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://apt.grafana.com stable main\n"
+        mode: '0644'
+
+    - name: Install Grafana
+      ansible.builtin.apt:
+        name: grafana
+        state: present
+        update_cache: true
+
+    - name: Enable and start Grafana
+      ansible.builtin.systemd:
+        name: grafana-server
+        enabled: true
+        state: started
+
+- name: Install Loki
+  hosts: loki
+  become: true
+  gather_facts: true
+
+  vars:
+    loki_version: "3.1.0"
+
+  tasks:
+    - name: Set DNS and route
+      ansible.builtin.copy:
+        content: "nameserver 8.8.8.8\n"
+        dest: /etc/resolv.conf
+
+    - name: Fix default route
+      ansible.builtin.shell: ip route replace default via {{ lxc_gateway }}
+      changed_when: false
+
+    - name: Create loki user and dirs
+      ansible.builtin.user:
+        name: loki
+        shell: /bin/false
+        system: true
+        create_home: false
+
+    - name: Create loki directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: loki
+        group: loki
+        mode: '0755'
+      loop:
+        - /etc/loki
+        - /var/lib/loki
+
+    - name: Download Loki
+      ansible.builtin.get_url:
+        url: "https://github.com/grafana/loki/releases/download/v{{ loki_version }}/loki-linux-amd64.zip"
+        dest: /tmp/loki.zip
+        mode: '0644'
+
+    - name: Install unzip
+      ansible.builtin.apt:
+        name: unzip
+        state: present
+        update_cache: true
+
+    - name: Extract Loki
+      ansible.builtin.unarchive:
+        src: /tmp/loki.zip
+        dest: /usr/local/bin/
+        remote_src: true
+        mode: '0755'
+
+    - name: Rename loki binary
+      ansible.builtin.shell: mv /usr/local/bin/loki-linux-amd64 /usr/local/bin/loki
+      args:
+        creates: /usr/local/bin/loki
+
+    - name: Write Loki config
+      ansible.builtin.copy:
+        dest: /etc/loki/loki.yml
+        owner: loki
+        group: loki
+        mode: '0644'
+        content: |
+          auth_enabled: false
+
+          server:
+            http_listen_port: 3100
+
+          common:
+            path_prefix: /var/lib/loki
+            storage:
+              filesystem:
+                chunks_directory: /var/lib/loki/chunks
+                rules_directory: /var/lib/loki/rules
+            replication_factor: 1
+            ring:
+              kvstore:
+                store: inmemory
+
+          schema_config:
+            configs:
+              - from: 2024-01-01
+                store: tsdb
+                object_store: filesystem
+                schema: v13
+                index:
+                  prefix: index_
+                  period: 24h
+      notify: Restart loki
+
+    - name: Create systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/loki.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Loki
+          After=network.target
+
+          [Service]
+          User=loki
+          Group=loki
+          Type=simple
+          ExecStart=/usr/local/bin/loki -config.file=/etc/loki/loki.yml
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Restart loki
+
+    - name: Enable and start loki
+      ansible.builtin.systemd:
+        name: loki
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Restart loki
+      ansible.builtin.systemd:
+        name: loki
+        state: restarted
+        daemon_reload: true

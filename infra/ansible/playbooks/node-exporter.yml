@@ -1,0 +1,52 @@
+---
+- name: Install node-exporter on k3s nodes
+  hosts: k3s_cluster
+  become: true
+  gather_facts: true
+
+  vars:
+    node_exporter_version: "1.8.1"
+
+  tasks:
+    - name: Download node-exporter
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /tmp/node_exporter.tar.gz
+        mode: '0644'
+
+    - name: Extract node-exporter
+      ansible.builtin.unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /tmp/
+        remote_src: true
+
+    - name: Install node-exporter binary
+      ansible.builtin.copy:
+        src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        remote_src: true
+        mode: '0755'
+
+    - name: Create systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/node-exporter.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Node Exporter
+          After=network.target
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/local/bin/node_exporter
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start node-exporter
+      ansible.builtin.systemd:
+        name: node-exporter
+        enabled: true
+        state: started
+        daemon_reload: true
