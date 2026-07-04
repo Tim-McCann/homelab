@@ -7,24 +7,24 @@ A self-hosted, production-aligned platform built to demonstrate real-world DevOp
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    ThinkPad (Control Plane)              │
-│         Terraform · Ansible · kubectl · Git · SSH        │
-└───────────────────┬─────────────────┬───────────────────┘
-                    │                 │
-       ┌────────────▼──────┐ ┌───────▼────────────┐
-       │  HP EliteDesk G4  │ │   Intel NUC5i5RYH  │
-       │  (Compute Node)   │ │   (Edge Node)       │
-       │                   │ │                     │
-       │  Proxmox VE 9.x   │ │  Proxmox VE 9.x    │
-       │  ├─ k3s control   │ │  ├─ Pi-hole (DNS)   │
-       │  ├─ k3s worker-1  │ │  ├─ Tailscale (VPN) │
-       │  └─ k3s worker-2  │ │  ├─ PBS (Backups)   │
-       │                   │ │  └─ Uptime Kuma      │
-       │  i5-8500T 6c      │ │                     │
-       │  32GB DDR4        │ │  i5-5250U 2c        │
-       │  256GB NVMe       │ │  16GB DDR3          │
-       └───────────────────┘ └────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    ThinkPad (Control Plane)                      │
+│    Terraform · Ansible 2.19 · kubectl · Helm · Git · Tailscale  │
+└───────────────────┬──────────────────────┬───────────────────────┘
+                    │                      │
+       ┌────────────▼──────────┐  ┌───────▼────────────────┐
+       │   HP EliteDesk G4     │  │   Intel NUC5i5RYH      │
+       │   Compute Node        │  │   Edge Node             │
+       │                       │  │                         │
+       │   Proxmox VE 9.x      │  │   Proxmox VE 9.x       │
+       │   ├─ k3s-cp-01 (.30)  │  │   ├─ Pi-hole    (.21)  │
+       │   ├─ k3s-w-01  (.31)  │  │   ├─ Tailscale  (.22)  │
+       │   └─ k3s-w-02  (.32)  │  │   ├─ Uptime Kuma(.23)  │
+       │                       │  │   ├─ PBS        (.24)  │
+       │   i5-8500T · 6 cores  │  │   ├─ Prometheus (.25)  │
+       │   16GB DDR4           │  │   ├─ Grafana    (.26)  │
+       │   256GB NVMe          │  │   └─ Loki       (.27)  │
+       └───────────────────────┘  └────────────────────────┘
 ```
 
 **IP Scheme**
@@ -32,16 +32,21 @@ A self-hosted, production-aligned platform built to demonstrate real-world DevOp
 | Host | IP | Role |
 |---|---|---|
 | Gateway | 192.168.1.254 | ISP router |
-| Intel NUC5 | 192.168.1.20 | Edge services / Proxmox host |
+| HP EliteDesk G4 | 192.168.1.10 | Compute node — Proxmox host |
+| Intel NUC5 | 192.168.1.20 | Edge node — Proxmox host |
 | Pi-hole LXC | 192.168.1.21 | DNS + ad blocking (CT 100) |
 | Tailscale LXC | 192.168.1.22 | VPN mesh (CT 101) |
 | Uptime Kuma LXC | 192.168.1.23 | Uptime monitoring (CT 102) |
 | PBS LXC | 192.168.1.24 | Proxmox Backup Server (CT 103) |
-| HP EliteDesk G4 | 192.168.1.10 | Compute / Proxmox (pending) |
-| k3s control-plane VM | 192.168.1.30 | Kubernetes control (pending) |
-| k3s worker-1 VM | 192.168.1.31 | Kubernetes worker (pending) |
-| k3s worker-2 VM | 192.168.1.32 | Kubernetes worker (pending) |
-| MetalLB pool | 192.168.1.40–49 | LoadBalancer IPs (pending) |
+| Prometheus LXC | 192.168.1.25 | Metrics collection (CT 104) |
+| Grafana LXC | 192.168.1.26 | Dashboards (CT 105) |
+| Loki LXC | 192.168.1.27 | Log aggregation (CT 106) |
+| k3s control-plane | 192.168.1.30 | Kubernetes control plane (VM 300) |
+| k3s worker-1 | 192.168.1.31 | Kubernetes worker (VM 301) |
+| k3s worker-2 | 192.168.1.32 | Kubernetes worker (VM 302) |
+| MetalLB pool | 192.168.1.40-49 | LoadBalancer IPs |
+| Traefik | 192.168.1.40 | Ingress controller |
+| ArgoCD | 192.168.1.41 | GitOps engine |
 
 ---
 
@@ -49,212 +54,143 @@ A self-hosted, production-aligned platform built to demonstrate real-world DevOp
 
 | Component | Status |
 |---|---|
-| ThinkPad control plane tooling | ✅ Done |
-| NUC5 Proxmox VE 9.x | ✅ Done |
-| Pi-hole LXC (CT 100) | ✅ Done |
-| Tailscale LXC (CT 101) | ✅ Done |
-| Uptime Kuma LXC (CT 102) | ✅ Done |
-| PBS LXC (CT 103) | ✅ Done |
-| Ansible baseline playbook | ✅ Done |
-| G4 Proxmox | 🔲 Pending hardware |
-| Terraform VM provisioning | 🔲 Pending G4 |
-| k3s cluster | 🔲 Pending G4 |
-| MetalLB + Traefik + ArgoCD | 🔲 Pending k3s |
-| Prometheus + Grafana + Loki | 🔲 Pending k3s |
-| PBS backup schedules | 🔲 Pending G4 |
-
----
-
-## NUC5 Edge Node — Bootstrap Guide
-
-> **Read this before touching the NUC5.** This documents the exact provisioning order required to bring the edge node from bare metal to fully Ansible-managed.
-
-### Prerequisites
-
-- Proxmox VE 9.x ISO flashed to USB (via Balena Etcher)
-- ThinkPad bootstrap complete (`scripts/bootstrap-thinkpad.sh` run)
-- Physical ethernet cable from NUC5 to network
-
-### Step 1 — BIOS settings (F2 on boot)
-
-| Setting | Value |
-|---|---|
-| Boot order | USB first |
-| Secure Boot | Disabled |
-| VT-x / Virtualization | Enabled |
-| VT-d / IOMMU | Enabled |
-| After power loss | Power On |
-
-### Step 2 — Proxmox install
-
-Use graphical installer with these values:
-
-```
-Hostname:  nuc-edge.home.lab
-IP:        192.168.1.20/24
-Gateway:   192.168.1.254
-DNS:       8.8.8.8
-```
-
-> **Note:** The real gateway on this network is `192.168.1.254` (ISP router), not `.1`. Using `.1` will leave the NUC5 with no internet access after install.
-
-### Step 3 — Post-install repo fixes (SSH into NUC5)
-
-Proxmox VE 9.x uses `.sources` format (deb822), not `.list`. The enterprise repos must be blanked — `sed` on `.list` files won't work:
-
-```bash
-# Disable enterprise repos
-echo "" > /etc/apt/sources.list.d/pve-enterprise.sources
-echo "" > /etc/apt/sources.list.d/ceph.sources
-
-# Add community repos
-echo "deb http://download.proxmox.com/debian/pve trixie pve-no-subscription" \
-  > /etc/apt/sources.list.d/pve-no-subscription.list
-
-apt update && apt dist-upgrade -y
-reboot
-```
-
-### Step 4 — LXC container provisioning
-
-Download the Debian 12 template first:
-
-```bash
-pveam update
-pveam download local debian-12-standard_12.12-1_amd64.tar.zst
-```
-
-Create all four containers (use `local-lvm` for rootfs — `local` does not support container directories on this setup):
-
-```bash
-# Pi-hole — CT 100
-pct create 100 local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst \
-  --hostname pihole --memory 512 --cores 1 \
-  --net0 name=eth0,bridge=vmbr0,ip=192.168.1.21/24,gw=192.168.1.254 \
-  --storage local-lvm --rootfs local-lvm:4 \
-  --password --unprivileged 1 --features nesting=1 --onboot 1 --start 1
-
-# Tailscale — CT 101
-pct create 101 local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst \
-  --hostname tailscale --memory 256 --cores 1 \
-  --net0 name=eth0,bridge=vmbr0,ip=192.168.1.22/24,gw=192.168.1.254 \
-  --storage local-lvm --rootfs local-lvm:2 \
-  --password --unprivileged 1 --features nesting=1 --onboot 1 --start 1
-
-# Add TUN device for Tailscale (unprivileged LXC requirement)
-echo "lxc.cgroup2.devices.allow: c 10:200 rwm" >> /etc/pve/lxc/101.conf
-echo "lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file" >> /etc/pve/lxc/101.conf
-pct stop 101 && pct start 101
-
-# Uptime Kuma — CT 102
-pct create 102 local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst \
-  --hostname uptime-kuma --memory 512 --cores 1 \
-  --net0 name=eth0,bridge=vmbr0,ip=192.168.1.23/24,gw=192.168.1.254 \
-  --storage local-lvm --rootfs local-lvm:4 \
-  --password --unprivileged 1 --features nesting=1 --onboot 1 --start 1
-
-# PBS — CT 103
-pct create 103 local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst \
-  --hostname pbs --memory 1024 --cores 1 \
-  --net0 name=eth0,bridge=vmbr0,ip=192.168.1.24/24,gw=192.168.1.254 \
-  --storage local-lvm --rootfs local-lvm:8 \
-  --password --unprivileged 1 --features nesting=1 --onboot 1 --start 1
-```
-
-### Step 5 — SSH bootstrap (one-time, run from ThinkPad)
-
-Ansible needs SSH to manage containers. Fresh LXC templates don't have `openssh-server` and default to `PermitRootLogin prohibit-password`. The bootstrap script handles both:
-
-```bash
-# Copy and run bootstrap script on NUC5
-scp scripts/bootstrap-lxc-ssh.sh root@192.168.1.20:/root/
-ssh root@192.168.1.20 'chmod +x bootstrap-lxc-ssh.sh && ./bootstrap-lxc-ssh.sh'
-
-# Copy SSH key to all containers
-for ip in 192.168.1.21 192.168.1.22 192.168.1.23 192.168.1.24; do
-  ssh-copy-id -i ~/.ssh/homelab_ed25519.pub root@$ip
-done
-```
-
-### Step 6 — Run Ansible baseline
-
-```bash
-# Verify connectivity first
-~/ansible-venv/bin/ansible all -i infra/ansible/inventory/hosts.yml -m ping
-
-# Run baseline playbook
-~/ansible-venv/bin/ansible-playbook -i infra/ansible/inventory/hosts.yml \
-  infra/ansible/playbooks/lxc-baseline.yml
-```
-
-### Known gotchas
-
-**Ansible version:** ansible-core >= 2.18 required. Proxmox VE 9.x runs Python 3.13 — older Ansible versions fail with `ModuleNotFoundError: No module named 'ansible.module_utils.six.moves'`. The ThinkPad bootstrap script creates a Python 3.11 venv with ansible-core 2.19.x.
-
-**PBS enterprise repo:** PBS containers install with an enterprise `.list` repo file alongside the `.sources` file. Both must be blanked before `apt update` works:
-```bash
-echo "" > /etc/apt/sources.list.d/pbs-enterprise.sources
-echo "" > /etc/apt/sources.list.d/pbs-enterprise.list
-```
-
-**Container networking:** LXC containers are created with `gw=192.168.1.254` which matches the real network gateway. If containers lose their route after a restart, the Ansible baseline playbook will restore it on next run.
+| ThinkPad control plane tooling | done |
+| NUC5 Proxmox VE 9.x | done |
+| Pi-hole LXC (CT 100) | done |
+| Tailscale LXC (CT 101) | done |
+| Uptime Kuma LXC (CT 102) | done |
+| PBS LXC (CT 103) | done |
+| Prometheus LXC (CT 104) | done |
+| Grafana LXC (CT 105) | done |
+| Loki LXC (CT 106) | done |
+| Ansible baseline playbook | done |
+| Ansible observability playbook | done |
+| Ansible alerting + Alertmanager | done |
+| G4 Proxmox VE 9.x | done |
+| Terraform — 3 k3s VMs provisioned | done |
+| Ansible — k3s cluster installed | done |
+| MetalLB — IP pool 192.168.1.40-49 | done |
+| Traefik — ingress at 192.168.1.40 | done |
+| ArgoCD — GitOps at 192.168.1.41 | done |
+| kube-state-metrics via Helm | done |
+| node-exporter on all k3s nodes | done |
+| Promtail DaemonSet shipping logs to Loki | done |
+| 7 Prometheus alert rules | done |
+| Alertmanager Discord notifications | done |
+| PBS monthly backup schedule + restore tested | done |
+| DR runbook with RTO/RPO documented | done |
+| INC-001 postmortem — ArgoCD crash loop | done |
+| INC-002 simulation — CrashLoopBackOff | done |
+| INC-003 simulation — disk fill | done |
+| cert-manager + TLS | pending |
+| App-of-apps ArgoCD pattern | pending |
+| Factorio StatefulSet | pending |
+| CI/CD pipeline | pending |
+| Sealed Secrets | pending |
 
 ---
 
 ## Portfolio Projects
 
 ### Project 1 — GitOps Platform
-**Stack:** Kubernetes · ArgoCD · Helm
-**Goal:** All application deployments managed declaratively from Git. No manual `kubectl apply` in production.
-**Skills demonstrated:** GitOps, Kubernetes, Helm, declarative infrastructure
+**Stack:** Kubernetes · ArgoCD · Helm · Git
+**Status:** In progress — ArgoCD running, metallb-config synced, app-of-apps pattern pending
+**Skills demonstrated:** GitOps, Kubernetes, declarative infrastructure, drift detection
 
 ### Project 2 — Observability Stack
-**Stack:** Prometheus · Grafana · Loki · Alertmanager
-**Goal:** Full cluster observability — metrics, logs, and alerting — deployed via GitOps.
-**Skills demonstrated:** SRE practices, monitoring, alerting, log aggregation
+**Stack:** Prometheus · Grafana · Loki · Alertmanager · node-exporter · Promtail
+**Status:** Complete — 6 targets scraped, 7 alert rules, Discord notifications, logs flowing
+**Skills demonstrated:** SRE observability, metrics, logging, alerting, dashboard design
 
-### Project 3 — Backup & Disaster Recovery
-**Stack:** Proxmox Backup Server · ZFS snapshots
-**Goal:** Scheduled VM backups to NUC5 PBS, documented restore procedures, tested recovery drills.
-**Skills demonstrated:** DR planning, RTO/RPO, operational discipline
+### Project 3 — Incident Simulation Lab
+**Stack:** kubectl chaos · Prometheus alerts · Alertmanager · Postmortems
+**Status:** In progress — 3 postmortems written (1 real, 2 simulated), NodeDown pending
+**Skills demonstrated:** SRE incident response, alert validation, blameless postmortems
 
-### Project 4 — Incident Simulation Lab
-**Stack:** Prometheus Alertmanager · Grafana · Postmortems
-**Goal:** Deliberately break production services, detect via alerting, respond, write postmortems.
-**Skills demonstrated:** SRE incident response, alert tuning, blameless postmortems
+### Project 4 — Backup and Disaster Recovery
+**Stack:** Proxmox Backup Server · monthly backup schedule · restore drill
+**Status:** Complete — monthly backups scheduled, manually tested, DR runbook written
+**Skills demonstrated:** DR planning, RTO/RPO documentation, operational discipline
 
 ### Project 5 — Real Workload Operations
-**Stack:** Factorio dedicated server · Kubernetes StatefulSet · PVCs
-**Goal:** Operate a real user-facing stateful service with monitoring, backups, and defined SLOs.
-**Skills demonstrated:** Stateful workload operations, SLO definition, real-world service management
+**Stack:** Factorio · Kubernetes StatefulSet · PVC · SLOs · monitoring
+**Status:** Planned — pending G4 RAM upgrade for comfortable headroom
+**Skills demonstrated:** Stateful workload operations, SLO definition, end-to-end service management
 
-### Project 6 — Security & Identity Layer
+### Project 6 — Security and Identity
 **Stack:** cert-manager · Sealed Secrets · Network Policies · Keycloak
-**Goal:** TLS everywhere, secrets management, SSO, and network segmentation.
-**Skills demonstrated:** Security engineering, zero-trust principles, identity management
+**Status:** Planned
+**Skills demonstrated:** TLS everywhere, secrets management, zero-trust networking, SSO
+
+---
+
+## Incident Postmortems
+
+| ID | Type | Summary | Status |
+|---|---|---|---|
+| INC-001 | Real | ArgoCD crash loop — 34hr detection gap, API server contention | Partially resolved |
+| INC-002 | Simulation | CrashLoopBackOff alert validation — full pipeline confirmed | Resolved |
+| INC-003 | Simulation | Disk fill — DiskSpaceLow alert fired and resolved | Resolved |
+
+---
+
+## Observability Details
+
+**Prometheus scrape targets:**
+- prometheus (self) — localhost:9090
+- node-nuc5 — 192.168.1.20:9100
+- node-k3s-cp — 192.168.1.30:9100
+- node-k3s-w1 — 192.168.1.31:9100
+- node-k3s-w2 — 192.168.1.32:9100
+- kube-state-metrics — 192.168.1.30:30080
+
+**Alert rules:**
+- NodeDown — node exporter unreachable for 2 minutes
+- HighMemoryUsage — node memory above 85% for 5 minutes
+- HighCPUUsage — node CPU above 80% for 5 minutes
+- DiskSpaceLow — filesystem above 80% for 5 minutes
+- PodCrashLooping — pod restart rate above 0 over 15 minutes
+- PodNotReady — pod not ready for 5 minutes
+- NodeMemoryPressure — Kubernetes reporting memory pressure
+
+**Alert routing:** Prometheus → Alertmanager → Discord webhook → #alerts channel
+
+---
+
+## DR Summary
+
+| Scenario | RTO | Method |
+|---|---|---|
+| Single VM failure | 10-15 min | Restore from PBS backup |
+| Full G4 failure | 20-30 min | Restore all VMs from PBS |
+| Full rebuild from code | 15 min | terraform apply + ansible k3s.yml |
+
+Full runbook in docs/runbooks/disaster-recovery.md
 
 ---
 
 ## Tech Stack
 
-| Category | Tools |
-|---|---|
-| Hypervisor | Proxmox VE 9.x (Debian 13 Trixie) |
-| Containers (edge) | LXC (Pi-hole, Tailscale, Uptime Kuma, PBS) |
-| Containers (k8s) | Kubernetes (k3s) |
-| IaC | Terraform (Proxmox provider) |
-| Configuration | Ansible (ansible-core 2.19.x) |
-| GitOps | ArgoCD |
-| Ingress | Traefik |
-| Load Balancing | MetalLB |
-| TLS | cert-manager |
-| Metrics | Prometheus + Grafana |
-| Logs | Loki + Promtail |
-| Alerting | Alertmanager |
-| Backups | Proxmox Backup Server |
-| VPN | Tailscale |
-| DNS | Pi-hole |
-| Uptime | Uptime Kuma |
+| Category | Tool | Version |
+|---|---|---|
+| Hypervisor | Proxmox VE | 9.x (Debian 13 Trixie) |
+| Containers (edge) | LXC | Debian 12 Bookworm |
+| Kubernetes | k3s | v1.36.2 |
+| IaC | Terraform | >= 1.6 |
+| Configuration | Ansible | 2.19.x |
+| GitOps | ArgoCD | stable |
+| Ingress | Traefik | latest |
+| Load Balancing | MetalLB | v0.14.9 |
+| Metrics | Prometheus | 2.53.0 |
+| Visualization | Grafana | latest |
+| Logs | Loki | 3.1.0 |
+| Log shipping | Promtail | via Helm |
+| Alerting | Alertmanager | 0.27.0 |
+| Notifications | Discord webhook | via Alertmanager |
+| Backups | Proxmox Backup Server | latest |
+| VPN | Tailscale | latest |
+| DNS | Pi-hole | latest |
+| Uptime | Uptime Kuma | latest |
 
 ---
 
@@ -264,44 +200,62 @@ echo "" > /etc/apt/sources.list.d/pbs-enterprise.list
 homelab/
 ├── infra/
 │   ├── terraform/
-│   │   ├── proxmox/        # Proxmox host configuration
-│   │   └── k8s-vms/        # VM declarations for k3s nodes
+│   │   └── k8s-vms/            # VM declarations for k3s nodes
 │   └── ansible/
-│       ├── inventory/      # Host inventory files
-│       ├── playbooks/      # Ordered playbooks (lxc-baseline, k3s, etc.)
-│       └── roles/          # Reusable Ansible roles
+│       ├── inventory/
+│       │   └── hosts.yml       # All 9 hosts with groups and vars
+│       └── playbooks/
+│           ├── lxc-baseline.yml      # Edge LXC hardening
+│           ├── observability.yml     # Prometheus, Grafana, Loki
+│           ├── alerting.yml          # Prometheus alert rules
+│           ├── alertmanager.yml      # Alertmanager + Discord
+│           ├── node-exporter.yml     # node-exporter on k3s nodes
+│           └── k3s.yml               # k3s cluster install
 ├── k8s/
 │   ├── platform/
-│   │   ├── argocd/         # ArgoCD install + app-of-apps
-│   │   ├── metallb/        # MetalLB IP pool config
-│   │   ├── traefik/        # Ingress controller
-│   │   └── cert-manager/   # TLS certificate management
+│   │   ├── argocd/             # ArgoCD install + app-of-apps
+│   │   ├── metallb/            # MetalLB IP pool config
+│   │   └── traefik/            # Ingress controller values
 │   ├── monitoring/
-│   │   ├── prometheus/     # Prometheus + Alertmanager rules
-│   │   ├── grafana/        # Dashboards as code
-│   │   └── loki/           # Log aggregation
-│   ├── apps/               # User-facing applications
-│   └── storage/            # PVCs and storage classes
+│   │   └── promtail/           # Promtail Helm values
+│   └── apps/                   # User-facing applications
 ├── docs/
-│   ├── architecture/       # Architecture decision records (ADRs)
-│   ├── runbooks/           # Operational runbooks
-│   └── postmortems/        # Incident postmortems
-├── scripts/
-│   ├── bootstrap-thinkpad.sh   # One-time ThinkPad tooling install
-│   └── bootstrap-lxc-ssh.sh   # One-time SSH bootstrap for LXC containers
-└── diagrams/               # Architecture diagrams
+│   ├── architecture/
+│   │   └── ADR-001-k3s-distribution.md
+│   ├── runbooks/
+│   │   └── disaster-recovery.md
+│   └── postmortems/
+│       ├── TEMPLATE.md
+│       ├── INC-001-argocd-crashloop.md
+│       ├── INC-002-crashloop-simulation.md
+│       └── INC-003-disk-fill-simulation.md
+└── scripts/
+    ├── bootstrap-thinkpad.sh   # One-time ThinkPad tooling install
+    └── bootstrap-lxc-ssh.sh   # One-time SSH bootstrap for LXC containers
 ```
 
 ---
 
-## Build Order
+## NUC5 Bootstrap Guide
 
-1. **Phase 0** ✅ — ThinkPad tooling + NUC5 Proxmox + LXC edge services
-2. **Phase 1** 🔲 — G4 Proxmox + Terraform VM provisioning + k3s cluster
-3. **Phase 2** 🔲 — MetalLB + Traefik + cert-manager + ArgoCD
-4. **Phase 3** 🔲 — Observability stack (Prometheus + Grafana + Loki)
-5. **Phase 4** 🔲 — SRE layer (SLOs, alerting, incident simulation, DR drills)
-6. **Phase 5** 🔲 — Security hardening + secrets management
+See full guide in the previous README section. Quick reference:
+
+**Key gotchas:**
+- Gateway is 192.168.1.254 not 192.168.1.1
+- Proxmox VE 9 uses .sources repo format not .list
+- LXC containers need SSH bootstrapped before Ansible can manage them
+- ansible-core >= 2.18 required for Python 3.13 compatibility on PVE 9 hosts
+- PBS enterprise repo ships with both .list and .sources files — blank both
+
+**Bootstrap order:**
+1. Install Proxmox on NUC5 and G4
+2. Run scripts/bootstrap-thinkpad.sh on ThinkPad
+3. Run scripts/bootstrap-lxc-ssh.sh on NUC5 for each container
+4. Copy SSH keys: ssh-copy-id for all hosts
+5. Run ansible-playbook lxc-baseline.yml
+6. Run terraform apply for k3s VMs
+7. Run ansible-playbook k3s.yml
+8. Bootstrap ArgoCD
 
 ---
 
@@ -314,35 +268,39 @@ homelab/
 git clone https://github.com/YOUR_USERNAME/homelab.git
 cd homelab
 
-# 2. Bootstrap the ThinkPad control plane
+# 2. Bootstrap ThinkPad
 chmod +x scripts/bootstrap-thinkpad.sh
 ./scripts/bootstrap-thinkpad.sh
 
-# 3. Install Proxmox on NUC5 and G4 — see NUC5 Bootstrap Guide above
-
-# 4. Bootstrap SSH on LXC containers (one-time manual step)
+# 3. Bootstrap SSH on LXC containers (one-time)
 scp scripts/bootstrap-lxc-ssh.sh root@192.168.1.20:/root/
 ssh root@192.168.1.20 'chmod +x bootstrap-lxc-ssh.sh && ./bootstrap-lxc-ssh.sh'
 
-# 5. Copy SSH key to containers
-for ip in 192.168.1.21 192.168.1.22 192.168.1.23 192.168.1.24; do
+# 4. Copy SSH keys to all hosts
+for ip in 192.168.1.20 192.168.1.21 192.168.1.22 192.168.1.23 192.168.1.24 \
+          192.168.1.25 192.168.1.26 192.168.1.27; do
   ssh-copy-id -i ~/.ssh/homelab_ed25519.pub root@$ip
 done
 
-# 6. Run Ansible baseline
+# 5. Run Ansible baseline
 ~/ansible-venv/bin/ansible-playbook \
   -i infra/ansible/inventory/hosts.yml \
   infra/ansible/playbooks/lxc-baseline.yml
 
-# 7. Provision k3s VMs via Terraform (after G4 arrives)
+# 6. Provision k3s VMs
 cd infra/terraform/k8s-vms
 terraform init && terraform apply
 
-# 8. Install k3s via Ansible
-ansible-playbook -i inventory/hosts.yml playbooks/k3s.yml
+# 7. Install k3s
+cd ~/homelab
+~/ansible-venv/bin/ansible-playbook \
+  -i infra/ansible/inventory/hosts.yml \
+  infra/ansible/playbooks/k3s.yml
 
-# 9. Bootstrap ArgoCD
-kubectl apply -k k8s/platform/argocd/
+# 8. Bootstrap ArgoCD
+kubectl apply -n argocd -f \
+  https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer"}}'
 ```
 
-Full setup documentation is in [`docs/architecture/`](docs/architecture/) and [`docs/runbooks/`](docs/runbooks/).
+Full documentation in docs/architecture/ and docs/runbooks/
