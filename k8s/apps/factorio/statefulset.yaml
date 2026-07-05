@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: factorio
+  namespace: factorio
+spec:
+  serviceName: factorio
+  replicas: 1
+  selector:
+    matchLabels:
+      app: factorio
+  template:
+    metadata:
+      labels:
+        app: factorio
+    spec:
+      securityContext:
+        runAsUser: 845
+        runAsGroup: 845
+        fsGroup: 845
+      containers:
+        - name: factorio
+          image: factoriotools/factorio:stable
+          ports:
+            - containerPort: 34197
+              protocol: UDP
+            - containerPort: 27015
+              protocol: TCP
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 500m
+            limits:
+              memory: 1Gi
+              cpu: 1000m
+          env:
+            - name: GENERATE_NEW_SAVE
+              value: "false"
+            - name: SAVE_NAME
+              value: "homelab"
+            - name: DLC_SPACE_AGE
+              value: "true"
+            - name: LOAD_LATEST_SAVE
+              value: "true"
+          volumeMounts:
+            - name: factorio-data
+              mountPath: /factorio
+            - name: server-settings
+              mountPath: /factorio/config/server-settings.json
+              subPath: server-settings.json
+      volumes:
+        - name: factorio-data
+          persistentVolumeClaim:
+            claimName: factorio-data
+        - name: server-settings
+          configMap:
+            name: factorio-server-settings
