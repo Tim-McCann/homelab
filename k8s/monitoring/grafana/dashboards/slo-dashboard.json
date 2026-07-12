@@ -1,0 +1,111 @@
+{
+  "title": "SLO Dashboard — Homelab",
+  "uid": "homelab-slo",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "tags": ["slo", "homelab"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Factorio NucFactory — 30 Day Availability",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "auto", "textMode": "auto", "colorMode": "background"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {"steps": [{"color": "red", "value": 0}, {"color": "yellow", "value": 0.995}, {"color": "green", "value": 0.999}]},
+          "mappings": []
+        }
+      },
+      "targets": [{"expr": "slo:factorio:availability30d", "legendFormat": "30d availability", "datasource": "prometheus"}]
+    },
+    {
+      "id": 2,
+      "title": "Factorio SLO Target — 99.9%",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "auto", "textMode": "value_and_name", "colorMode": "background"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {"steps": [{"color": "red", "value": -10}, {"color": "yellow", "value": 0}, {"color": "green", "value": 0.5}]},
+          "mappings": []
+        }
+      },
+      "targets": [{"expr": "slo:factorio:error_budget_remaining30d", "legendFormat": "Error budget remaining", "datasource": "prometheus"}]
+    },
+    {
+      "id": 3,
+      "title": "k3s Cluster — 30 Day Node Availability",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "auto", "textMode": "auto", "colorMode": "background"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {"steps": [{"color": "red", "value": 0}, {"color": "yellow", "value": 0.99}, {"color": "green", "value": 0.995}]},
+          "mappings": []
+        }
+      },
+      "targets": [{"expr": "slo:cluster:nodes_ready30d", "legendFormat": "30d availability", "datasource": "prometheus"}]
+    },
+    {
+      "id": 4,
+      "title": "Cluster SLO Target — 99.5%",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "orientation": "auto", "textMode": "value_and_name", "colorMode": "background"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {"steps": [{"color": "red", "value": -10}, {"color": "yellow", "value": 0}, {"color": "green", "value": 0.5}]},
+          "mappings": []
+        }
+      },
+      "targets": [{"expr": "slo:cluster:error_budget_remaining30d", "legendFormat": "Error budget remaining", "datasource": "prometheus"}]
+    },
+    {
+      "id": 5,
+      "title": "Factorio Availability Over Time",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0.98,
+          "max": 1,
+          "thresholds": {"steps": [{"color": "red", "value": 0}, {"color": "green", "value": 0.999}]},
+          "custom": {"lineWidth": 2, "fillOpacity": 10}
+        }
+      },
+      "targets": [
+        {"expr": "slo:factorio:availability5m", "legendFormat": "5m", "datasource": "prometheus"},
+        {"expr": "slo:factorio:availability1h", "legendFormat": "1h", "datasource": "prometheus"},
+        {"expr": "slo:factorio:availability1d", "legendFormat": "1d", "datasource": "prometheus"}
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Cluster Node Availability Over Time",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0.9,
+          "max": 1,
+          "thresholds": {"steps": [{"color": "red", "value": 0}, {"color": "green", "value": 0.995}]},
+          "custom": {"lineWidth": 2, "fillOpacity": 10}
+        }
+      },
+      "targets": [
+        {"expr": "slo:cluster:nodes_ready5m", "legendFormat": "5m", "datasource": "prometheus"},
+        {"expr": "slo:cluster:nodes_ready1h", "legendFormat": "1h", "datasource": "prometheus"},
+        {"expr": "slo:cluster:nodes_ready1d", "legendFormat": "1d", "datasource": "prometheus"}
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "time": {"from": "now-30d", "to": "now"}
+}
