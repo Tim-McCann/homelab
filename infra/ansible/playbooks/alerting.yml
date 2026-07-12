@@ -96,6 +96,7 @@
 
           rule_files:
             - /etc/prometheus/alerts.yml
+            - /etc/prometheus/slo-rules.yml
 
           scrape_configs:
             - job_name: 'prometheus'
@@ -128,3 +129,36 @@
       ansible.builtin.systemd:
         name: prometheus
         state: restarted
+
+    - name: Write SLO recording rules
+      ansible.builtin.copy:
+        dest: /etc/prometheus/slo-rules.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+        content: |
+          groups:
+            - name: slo.rules
+              interval: 30s
+              rules:
+                - record: slo:factorio:availability5m
+                  expr: avg_over_time(kube_pod_status_ready{namespace="factorio",pod=~"factorio-.*",condition="true"}[5m])
+                - record: slo:factorio:availability1h
+                  expr: avg_over_time(kube_pod_status_ready{namespace="factorio",pod=~"factorio-.*",condition="true"}[1h])
+                - record: slo:factorio:availability1d
+                  expr: avg_over_time(kube_pod_status_ready{namespace="factorio",pod=~"factorio-.*",condition="true"}[1d])
+                - record: slo:factorio:availability30d
+                  expr: avg_over_time(kube_pod_status_ready{namespace="factorio",pod=~"factorio-.*",condition="true"}[30d])
+                - record: slo:cluster:nodes_ready5m
+                  expr: avg_over_time(sum(kube_node_status_condition{condition="Ready",status="true"})[5m:30s]) / count(kube_node_info)
+                - record: slo:cluster:nodes_ready1h
+                  expr: avg_over_time(sum(kube_node_status_condition{condition="Ready",status="true"})[1h:30s]) / count(kube_node_info)
+                - record: slo:cluster:nodes_ready1d
+                  expr: avg_over_time(sum(kube_node_status_condition{condition="Ready",status="true"})[1d:30s]) / count(kube_node_info)
+                - record: slo:cluster:nodes_ready30d
+                  expr: avg_over_time(sum(kube_node_status_condition{condition="Ready",status="true"})[30d:30s]) / count(kube_node_info)
+                - record: slo:factorio:error_budget_remaining30d
+                  expr: (slo:factorio:availability30d - 0.999) / (1 - 0.999)
+                - record: slo:cluster:error_budget_remaining30d
+                  expr: (slo:cluster:nodes_ready30d - 0.995) / (1 - 0.995)
+      notify: Restart prometheus
