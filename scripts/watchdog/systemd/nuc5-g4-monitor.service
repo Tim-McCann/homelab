@@ -1,0 +1,7 @@
+[Unit]
+Description=G4 compute node monitor
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/g4-monitor.sh
