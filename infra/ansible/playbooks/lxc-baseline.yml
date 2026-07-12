@@ -12,7 +12,7 @@
 #   4. SSH keys must be configured for root access to containers
 
 - name: "Proxmox Host LXC Configuration"
-  hosts: proxmox_hosts
+  hosts: pve-nuc5-edge
   gather_facts: true
   tasks:
 
