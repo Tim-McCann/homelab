@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: factorio-allow-game
+  namespace: factorio
+spec:
+  podSelector:
+    matchLabels:
+      app: factorio
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 34197
+          protocol: UDP
+        - port: 27015
+          protocol: TCP
