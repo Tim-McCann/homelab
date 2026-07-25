@@ -1,0 +1,49 @@
+---
+- name: Configure G4 network interfaces
+  hosts: g4-platform
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Write /etc/network/interfaces with UE300 as bridge port
+      ansible.builtin.copy:
+        dest: /etc/network/interfaces
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          auto lo
+          iface lo inet loopback
+          iface nic0 inet manual
+          auto vmbr0
+          iface vmbr0 inet static
+          	address 192.168.1.10/24
+          	bridge-ports enx9c69d399ce62
+          	bridge-stp off
+          	bridge-fd 0
+          iface nic1 inet manual
+          source /etc/network/interfaces.d/*
+          auto wlp0s20f3
+          iface wlp0s20f3 inet dhcp
+              wpa-conf /etc/wpa_supplicant/wpa_supplicant.conf
+
+    - name: Blacklist e1000e driver permanently
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/blacklist-e1000e.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Blacklisted due to recurring Hardware Unit Hang failures (INC-006, INC-008)
+          # Replaced by TP-Link UE300 USB ethernet (enx9c69d399ce62) as vmbr0 bridge NIC
+          blacklist e1000e
+
+    - name: Verify UE300 interface exists
+      ansible.builtin.command: ip link show enx9c69d399ce62
+      register: ue300_check
+      failed_when: ue300_check.rc != 0
+      changed_when: false
+
+    - name: Report UE300 status
+      ansible.builtin.debug:
+        msg: "UE300 (enx9c69d399ce62) detected and configured as vmbr0 bridge port"
