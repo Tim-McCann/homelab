@@ -37,7 +37,10 @@ spec:
             - name: PHOTOPRISM_ADMIN_USER
               value: "admin"
             - name: PHOTOPRISM_ADMIN_PASSWORD
-              value: "homelab123"
+              valueFrom:
+                secretKeyRef:
+                  name: photoprism-secret
+                  key: admin-password
             - name: PHOTOPRISM_AUTH_MODE
               value: "password"
             - name: PHOTOPRISM_SITE_URL
