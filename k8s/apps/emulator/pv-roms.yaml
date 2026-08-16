@@ -1,27 +1,27 @@
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: media-pv
+  name: emulator-roms-pv
 spec:
   capacity:
-    storage: 5Ti
+    storage: 1Ti
   accessModes:
     - ReadWriteMany
   persistentVolumeReclaimPolicy: Retain
   nfs:
     server: 192.168.1.221
-    path: /volume1/media
+    path: /volume1/roms
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: media-pvc
-  namespace: media
+  name: emulator-roms-pvc
+  namespace: emulator
 spec:
   accessModes:
     - ReadWriteMany
   resources:
     requests:
-      storage: 5Ti
-  volumeName: media-pv
+      storage: 1Ti
+  volumeName: emulator-roms-pv
   storageClassName: ""
