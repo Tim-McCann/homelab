@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: photoprism
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: photoprism-storage-pvc
+  namespace: photoprism
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: photoprism
+  namespace: photoprism
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: photoprism
+  template:
+    metadata:
+      labels:
+        app: photoprism
+    spec:
+      containers:
+        - name: photoprism
+          image: photoprism/photoprism:latest
+          env:
+            - name: PHOTOPRISM_ADMIN_USER
+              value: "admin"
+            - name: PHOTOPRISM_ADMIN_PASSWORD
+              value: "homelab123"
+            - name: PHOTOPRISM_AUTH_MODE
+              value: "password"
+            - name: PHOTOPRISM_SITE_URL
+              value: "https://photos.home.lab"
+            - name: PHOTOPRISM_ORIGINALS_LIMIT
+              value: "-1"
+            - name: PHOTOPRISM_HTTP_COMPRESSION
+              value: "gzip"
+            - name: PHOTOPRISM_LOG_LEVEL
+              value: "info"
+            - name: PHOTOPRISM_READONLY
+              value: "false"
+            - name: PHOTOPRISM_EXPERIMENTAL
+              value: "false"
+            - name: PHOTOPRISM_DISABLE_CHOWN
+              value: "false"
+            - name: PHOTOPRISM_DISABLE_WEBDAV
+              value: "false"
+            - name: PHOTOPRISM_DETECT_NSFW
+              value: "false"
+            - name: PHOTOPRISM_UPLOAD_NSFW
+              value: "true"
+            - name: PHOTOPRISM_DATABASE_DRIVER
+              value: "sqlite"
+            - name: PHOTOPRISM_FACE_SIZE
+              value: "0"
+            - name: PHOTOPRISM_AI_MAXAGE
+              value: "0"
+          ports:
+            - containerPort: 2342
+          volumeMounts:
+            - name: photos
+              mountPath: /photoprism/originals
+            - name: storage
+              mountPath: /photoprism/storage
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: photos
+          persistentVolumeClaim:
+            claimName: photoprism-photos-pvc
+        - name: storage
+          persistentVolumeClaim:
+            claimName: photoprism-storage-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: photoprism
+  namespace: photoprism
+spec:
+  selector:
+    app: photoprism
+  ports:
+    - port: 2342
+      targetPort: 2342
