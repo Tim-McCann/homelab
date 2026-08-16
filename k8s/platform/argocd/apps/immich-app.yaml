@@ -1,0 +1,61 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: immich
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://immich-app.github.io/immich-charts
+    chart: immich
+    targetRevision: 0.9.0
+    helm:
+      values: |
+        image:
+          tag: v1.111.0
+
+        immich:
+          metrics:
+            enabled: false
+          persistence:
+            library:
+              existingClaim: immich-photos-pvc
+
+        server:
+          enabled: true
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+
+        microservices:
+          enabled: true
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+
+        machine-learning:
+          enabled: false
+
+        postgresql:
+          enabled: true
+          primary:
+            persistence:
+              size: 8Gi
+
+        redis:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: immich
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
