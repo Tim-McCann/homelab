@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jellyfin
+  namespace: media
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jellyfin
+  template:
+    metadata:
+      labels:
+        app: jellyfin
+    spec:
+      containers:
+        - name: jellyfin
+          image: lscr.io/linuxserver/jellyfin:latest
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: "America/Chicago"
+          ports:
+            - containerPort: 8096
+          volumeMounts:
+            - name: media
+              mountPath: /data/tvshows
+              subPath: tv
+            - name: media
+              mountPath: /data/movies
+              subPath: movies
+            - name: config
+              mountPath: /config
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: media-pvc
+        - name: config
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jellyfin
+  namespace: media
+  annotations:
+    metallb.universe.tf/loadBalancerIPs: "192.168.1.43"
+spec:
+  type: LoadBalancer
+  selector:
+    app: jellyfin
+  ports:
+    - port: 8096
+      targetPort: 8096
