@@ -25,7 +25,7 @@ resource "proxmox_virtual_environment_vm" "k3s_control_plane" {
   }
 
   memory {
-    dedicated = 3072
+    dedicated = 6144
   }
 
   disk {
@@ -83,7 +83,7 @@ resource "proxmox_virtual_environment_vm" "k3s_workers" {
   }
 
   memory {
-    dedicated = 4096
+    dedicated = 10240
   }
 
   disk {
