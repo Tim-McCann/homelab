@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: emulator-roms-pv
+  name: romm-roms-pv
 spec:
   capacity:
     storage: 1Ti
@@ -15,13 +15,13 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: emulator-roms-pvc
-  namespace: emulator
+  name: romm-roms-pvc
+  namespace: romm
 spec:
   accessModes:
     - ReadWriteMany
   resources:
     requests:
       storage: 1Ti
-  volumeName: emulator-roms-pv
+  volumeName: romm-roms-pv
   storageClassName: ""

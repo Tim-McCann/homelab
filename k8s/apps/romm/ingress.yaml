@@ -1,8 +1,8 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: emulator-ingress
-  namespace: emulator
+  name: romm-ingress
+  namespace: romm
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
@@ -11,16 +11,16 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - emulator.home.lab
-      secretName: emulator-tls
+        - romm.home.lab
+      secretName: romm-tls
   rules:
-    - host: emulator.home.lab
+    - host: romm.home.lab
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: emulatorjs
+                name: romm
                 port:
-                  number: 80
+                  number: 8080
