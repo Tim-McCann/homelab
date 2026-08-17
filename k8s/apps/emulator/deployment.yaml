@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: emulatorjs
-          image: lscr.io/linuxserver/emulatorjs:amd64-latest
+          image: linuxserver/emulatorjs:latest
           env:
             - name: PUID
               value: "1000"
