@@ -10,7 +10,7 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   nfs:
     server: 192.168.1.221
-    path: /volume1/roms
+    path: /volume1/roms/roms
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
