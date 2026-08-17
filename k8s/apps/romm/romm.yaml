@@ -25,20 +25,20 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: romm
+  name: romm-app
   namespace: romm
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: romm
+      app: romm-app
   template:
     metadata:
       labels:
-        app: romm
+        app: romm-app
     spec:
       containers:
-        - name: romm
+        - name: romm-app
           image: rommapp/romm:latest
           env:
             - name: DB_HOST
@@ -87,11 +87,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: romm
+  name: romm-app
   namespace: romm
 spec:
   selector:
-    app: romm
+    app: romm-app
   ports:
     - port: 8080
       targetPort: 8080
