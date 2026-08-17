@@ -57,6 +57,8 @@ spec:
                 secretKeyRef:
                   name: romm-secret
                   key: romm-auth-secret-key
+            - name: ROMM_HOST
+              value: "0.0.0.0"
           ports:
             - containerPort: 8080
           volumeMounts:
