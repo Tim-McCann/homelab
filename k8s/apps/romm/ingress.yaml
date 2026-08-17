@@ -11,10 +11,10 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - romm.home.lab
-      secretName: romm-tls
+        - emulator.home.lab
+      secretName: emulator-tls
   rules:
-    - host: romm.home.lab
+    - host: emulator.home.lab
       http:
         paths:
           - path: /
