@@ -18,7 +18,7 @@ spec:
           image: ghcr.io/immich-app/immich-server:release
           env:
             - name: DB_HOSTNAME
-              value: immich-db-rw
+              value: immich-db
             - name: DB_PORT
               value: "5432"
             - name: DB_DATABASE_NAME
