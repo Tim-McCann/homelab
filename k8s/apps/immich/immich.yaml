@@ -13,6 +13,19 @@ spec:
       labels:
         app: immich-server
     spec:
+      initContainers:
+        - name: wait-for-db
+          image: postgres:16
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: immich-secret
+                  key: password
+          command:
+            - sh
+            - -c
+            - until psql -h immich-db -U immich -d immich -c "SELECT 1;" > /dev/null 2>&1; do echo "Waiting for DB..."; sleep 2; done
       containers:
         - name: immich-server
           image: ghcr.io/immich-app/immich-server:release
