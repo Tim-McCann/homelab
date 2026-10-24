@@ -12,10 +12,10 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - immich.home.lab
+        - photos.home.lab
       secretName: immich-tls
   rules:
-    - host: immich.home.lab
+    - host: photos.home.lab
       http:
         paths:
           - path: /
