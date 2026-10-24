@@ -29,7 +29,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: immich-secret
-                  key: db-password
+                  key: password
             - name: REDIS_HOSTNAME
               value: immich-redis
             - name: UPLOAD_LOCATION
