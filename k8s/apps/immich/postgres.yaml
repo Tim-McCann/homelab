@@ -16,6 +16,7 @@ spec:
       owner: immich
       secret:
         name: immich-secret
-      postInitApplicationSQL:
+      postInitSQL:
+        - CREATE EXTENSION IF NOT EXISTS "vector";
         - CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
         - CREATE EXTENSION IF NOT EXISTS "unaccent";
